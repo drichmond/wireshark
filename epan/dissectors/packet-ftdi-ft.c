@@ -75,6 +75,16 @@ static gint hf_if_c_tx_payload = -1;
 static gint hf_if_d_rx_payload = -1;
 static gint hf_if_d_tx_payload = -1;
 
+static gint hf_tx_payload_command = -1;
+static gint hf_tx_payload_write_neg = -1;
+static gint hf_tx_payload_bitmode = -1;
+static gint hf_tx_payload_read_neg = -1;
+static gint hf_tx_payload_lsb = -1;
+static gint hf_tx_payload_write = -1;
+static gint hf_tx_payload_read = -1;
+static gint hf_tx_payload_mpsse = -1;
+
+
 static gint ett_ftdi_ft = -1;
 static gint ett_modem_ctrl_lvalue = -1;
 static gint ett_modem_ctrl_hvalue = -1;
@@ -84,6 +94,7 @@ static gint ett_baudrate_hindex = -1;
 static gint ett_setdata_hvalue = -1;
 static gint ett_modem_status = -1;
 static gint ett_line_status = -1;
+static gint ett_tx_payload_command = -1;
 
 static expert_field ei_undecoded = EI_INIT;
 
@@ -590,6 +601,27 @@ dissect_modem_status_bytes(tvbuff_t *tvb, packet_info *pinfo _U_, gint offset, p
 }
 
 static gint
+dissect_modem_payload_bytes(tvbuff_t *tvb, packet_info *pinfo _U_, gint offset, proto_tree *tree)
+{
+    static const int *command_payload_bits[] = {
+        &hf_tx_payload_write_neg,
+        &hf_tx_payload_bitmode,
+        &hf_tx_payload_read_neg,
+        &hf_tx_payload_lsb,
+        &hf_tx_payload_write,
+        &hf_tx_payload_read,
+        &hf_tx_payload_mpsse,
+        NULL
+    };
+
+    proto_tree_add_bitmask(tree, tvb, offset, hf_tx_payload_command, 
+        ett_tx_payload_command, command_payload_bits, ENC_LITTLE_ENDIAN);
+    offset++;
+
+    return 1;
+}
+
+static gint
 dissect_ftdi_ft(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
 {
     proto_item       *main_item;
@@ -783,6 +815,7 @@ dissect_ftdi_ft(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
         else
         {
             col_add_fstr(pinfo->cinfo, COL_INFO, "INTERFACE %s TX", interface_str);
+            offset += dissect_modem_payload_bytes(tvb, pinfo, offset, main_tree);
             payload_hf = tx_hf;
         }
         bytes = tvb_reported_length_remaining(tvb, offset);
@@ -1078,6 +1111,46 @@ proto_register_ftdi_ft(void)
             FT_BYTES, BASE_NONE, NULL, 0x0,
             "Data to transmit on interface D", HFILL }
         },
+        { &hf_tx_payload_command,
+          { "TX Command", "ftdift.tx_payload.command",
+            FT_UINT8, BASE_HEX, NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_tx_payload_write_neg, 
+          { "MPSSE Write Neg", "ftdift.tx_payload.write_neg",
+            FT_BOOLEAN, 8, NULL, 0x01,
+            "MPSSE Write TDO on negative TCK/SK edge", HFILL }
+        },
+        { &hf_tx_payload_bitmode,
+          { "MPSSE Bitmode", "ftdift.tx_payload.bitmode",
+            FT_BOOLEAN, 8, NULL, 0x02,
+            "MPSSE Write Bits, not Bytes", HFILL }
+        },
+        { &hf_tx_payload_read_neg,
+          { "MPSSE Read Neg", "ftdift.tx_payload.read_neg",
+            FT_BOOLEAN, 8, NULL, 0x04,
+            "MPSSE Read TDI on negative TCK/SK edge", HFILL }
+        },
+        { &hf_tx_payload_lsb,
+          { "MPSSE LSB", "ftdift.tx_payload.lsb",
+            FT_BOOLEAN, 8, NULL, 0x08,
+            "MPSSE Read/Write LSB First", HFILL }
+        },
+        { &hf_tx_payload_write,
+          { "MPSSE Write TDI/DO", "ftdift.tx_payload.write",
+            FT_BOOLEAN, 8, NULL, 0x10,
+            "MPSSE Write TDI/DO", HFILL }
+        },
+        { &hf_tx_payload_read,
+          { "MPSSE Read TDI/DO", "ftdift.tx_payload.read",
+            FT_BOOLEAN, 8, NULL, 0x20,
+            "MPSSE Read TDI/DO", HFILL }
+        },
+        { &hf_tx_payload_mpsse,
+          { "MPSSE Write TMS/CS", "ftdift.tx_payload.mpsse",
+            FT_BOOLEAN, 8, NULL, 0x40,
+            "MPSSE Write TMS/CS", HFILL }
+        },
     };
 
     static ei_register_info ei[] = {
@@ -1094,6 +1167,7 @@ proto_register_ftdi_ft(void)
         &ett_setdata_hvalue,
         &ett_modem_status,
         &ett_line_status,
+        &ett_tx_payload_command,
     };
 
     request_info = wmem_tree_new_autoreset(wmem_epan_scope(), wmem_file_scope());

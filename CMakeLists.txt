@@ -1033,6 +1033,7 @@ find_package(GCRYPT "1.4.2" REQUIRED)
 find_package(LEX REQUIRED)
 find_package(YACC REQUIRED)
 find_package(Perl REQUIRED)
+find_package(libftdi REQUIRED)
 
 if(CMAKE_VERSION VERSION_LESS "3.12")
 	# Locate the Python interpreter. Finds the wrong (Python 2) version if:

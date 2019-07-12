@@ -15,6 +15,7 @@
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/expert.h>
+#include <ftdi.h>
 #include "packet-usb.h"
 
 static int proto_ftdi_ft = -1;
@@ -83,7 +84,11 @@ static gint hf_tx_payload_lsb = -1;
 static gint hf_tx_payload_write = -1;
 static gint hf_tx_payload_read = -1;
 static gint hf_tx_payload_mpsse = -1;
+static gint hf_tx_payload_unknown = -1;
 
+static gint hf_tx_payload_bitlen = -1;
+static gint hf_tx_payload_bytelen = -1;
+static gint hf_tx_payload_data = -1;
 
 static gint ett_ftdi_ft = -1;
 static gint ett_modem_ctrl_lvalue = -1;
@@ -95,6 +100,8 @@ static gint ett_setdata_hvalue = -1;
 static gint ett_modem_status = -1;
 static gint ett_line_status = -1;
 static gint ett_tx_payload_command = -1;
+
+static gint ett_jtag_ft = -1;
 
 static expert_field ei_undecoded = EI_INIT;
 
@@ -601,8 +608,10 @@ dissect_modem_status_bytes(tvbuff_t *tvb, packet_info *pinfo _U_, gint offset, p
 }
 
 static gint
-dissect_modem_payload_bytes(tvbuff_t *tvb, packet_info *pinfo _U_, gint offset, proto_tree *tree)
+dissect_jtag_command(tvbuff_t *tvb, packet_info *pinfo _U_, gint offset, proto_tree *tree, proto_item *item)
 {
+    guint8 cmd;
+    guint16 bytelen;
     static const int *command_payload_bits[] = {
         &hf_tx_payload_write_neg,
         &hf_tx_payload_bitmode,
@@ -614,11 +623,48 @@ dissect_modem_payload_bytes(tvbuff_t *tvb, packet_info *pinfo _U_, gint offset, 
         NULL
     };
 
-    proto_tree_add_bitmask(tree, tvb, offset, hf_tx_payload_command, 
-        ett_tx_payload_command, command_payload_bits, ENC_LITTLE_ENDIAN);
-    offset++;
+    tree = proto_item_add_subtree(item, ett_jtag_ft);
 
-    return 1;
+    do{
+        cmd = tvb_get_guint8(tvb, offset);
+        // TODO: Check for valid command
+        proto_tree_add_bitmask(tree, tvb, offset, hf_tx_payload_command, 
+                            ett_tx_payload_command, command_payload_bits, ENC_LITTLE_ENDIAN);
+        offset++;
+        if(cmd & MPSSE_BITMODE){
+            proto_tree_add_item(tree, hf_tx_payload_bitlen, tvb, offset, 1, ENC_LITTLE_ENDIAN);
+            offset++;
+
+            proto_tree_add_item(tree, hf_tx_payload_data, tvb, offset, 1, ENC_LITTLE_ENDIAN);
+            offset++;
+        }else{
+            proto_tree_add_item(tree, hf_tx_payload_bytelen, tvb, offset, 2, ENC_LITTLE_ENDIAN);
+            bytelen = tvb_get_guint16(tvb, offset, ENC_LITTLE_ENDIAN) + 1;
+            offset += 2;
+
+            proto_tree_add_item(tree, hf_tx_payload_data, tvb, offset, bytelen, ENC_LITTLE_ENDIAN);
+            offset += bytelen;
+        }
+    } while((tvb_reported_length_remaining(tvb, offset) > 0) && ~(cmd & MPSSE_WRITE_TMS));
+
+    return offset;
+}
+static gint
+dissect_modem_payload_bytes(tvbuff_t *tvb, packet_info *pinfo _U_, gint offset, proto_tree *tree, proto_item *item
+)
+{
+    guint8 cmd;
+
+    while(tvb_reported_length_remaining(tvb, offset) > 0){
+
+        cmd = tvb_get_guint8(tvb, offset);
+        if(cmd & MPSSE_WRITE_TMS){
+            offset = dissect_jtag_command(tvb, pinfo, offset, tree, item);
+        } else {
+            return offset;
+        }
+    }
+    return offset;
 }
 
 static gint
@@ -815,7 +861,7 @@ dissect_ftdi_ft(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
         else
         {
             col_add_fstr(pinfo->cinfo, COL_INFO, "INTERFACE %s TX", interface_str);
-            offset += dissect_modem_payload_bytes(tvb, pinfo, offset, main_tree);
+            offset = dissect_modem_payload_bytes(tvb, pinfo, offset, main_tree, main_item);
             payload_hf = tx_hf;
         }
         bytes = tvb_reported_length_remaining(tvb, offset);
@@ -1118,38 +1164,58 @@ proto_register_ftdi_ft(void)
         },
         { &hf_tx_payload_write_neg, 
           { "MPSSE Write Neg", "ftdift.tx_payload.write_neg",
-            FT_BOOLEAN, 8, NULL, 0x01,
+            FT_BOOLEAN, 8, NULL, MPSSE_WRITE_NEG,
             "MPSSE Write TDO on negative TCK/SK edge", HFILL }
         },
         { &hf_tx_payload_bitmode,
           { "MPSSE Bitmode", "ftdift.tx_payload.bitmode",
-            FT_BOOLEAN, 8, NULL, 0x02,
+            FT_BOOLEAN, 8, NULL, MPSSE_BITMODE,
             "MPSSE Write Bits, not Bytes", HFILL }
         },
         { &hf_tx_payload_read_neg,
           { "MPSSE Read Neg", "ftdift.tx_payload.read_neg",
-            FT_BOOLEAN, 8, NULL, 0x04,
+            FT_BOOLEAN, 8, NULL, MPSSE_READ_NEG,
             "MPSSE Read TDI on negative TCK/SK edge", HFILL }
         },
         { &hf_tx_payload_lsb,
           { "MPSSE LSB", "ftdift.tx_payload.lsb",
-            FT_BOOLEAN, 8, NULL, 0x08,
+            FT_BOOLEAN, 8, NULL, MPSSE_LSB,
             "MPSSE Read/Write LSB First", HFILL }
         },
         { &hf_tx_payload_write,
           { "MPSSE Write TDI/DO", "ftdift.tx_payload.write",
-            FT_BOOLEAN, 8, NULL, 0x10,
+            FT_BOOLEAN, 8, NULL, MPSSE_DO_WRITE,
             "MPSSE Write TDI/DO", HFILL }
         },
         { &hf_tx_payload_read,
           { "MPSSE Read TDI/DO", "ftdift.tx_payload.read",
-            FT_BOOLEAN, 8, NULL, 0x20,
+            FT_BOOLEAN, 8, NULL, MPSSE_DO_READ,
             "MPSSE Read TDI/DO", HFILL }
         },
         { &hf_tx_payload_mpsse,
           { "MPSSE Write TMS/CS", "ftdift.tx_payload.mpsse",
-            FT_BOOLEAN, 8, NULL, 0x40,
+            FT_BOOLEAN, 8, NULL, MPSSE_WRITE_TMS,
             "MPSSE Write TMS/CS", HFILL }
+        },
+        { &hf_tx_payload_unknown,
+          { "Unknown Function Bit", "ftdift.tx_payload.unknown",
+            FT_BOOLEAN, 8, NULL, 0x80,
+            "Unknown Function Bit", HFILL }
+        },
+        { &hf_tx_payload_bitlen,
+          { "MPSSE Command Length (Bits)", "ftdift.tx_payload.command.bitlen",
+            FT_UINT8, BASE_DEC, NULL, 0x0,
+            "MPSSE Command Length (Bits)", HFILL }
+        },
+        { &hf_tx_payload_bytelen,
+          { "MPSSE Command Length (Bytes)", "ftdift.tx_payload.command.bytelen",
+            FT_UINT16, BASE_DEC, NULL, 0x0,
+            "MPSSE Command Length (Bytes)", HFILL }
+        },
+        { &hf_tx_payload_data,
+          { "MPSSE Command Data", "ftdift.tx_payload.command.data",
+            FT_BYTES, BASE_NONE, NULL, 0x0,
+            "MPSSE Command Data", HFILL }
         },
     };
 
@@ -1168,6 +1234,7 @@ proto_register_ftdi_ft(void)
         &ett_modem_status,
         &ett_line_status,
         &ett_tx_payload_command,
+        &ett_jtag_ft,
     };
 
     request_info = wmem_tree_new_autoreset(wmem_epan_scope(), wmem_file_scope());

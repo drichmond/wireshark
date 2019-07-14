@@ -17,7 +17,7 @@ if (NOT LIBFTDI_FOUND)
 
   if(NOT WIN32)
     include(FindPkgConfig)
-    pkg_check_modules(LIBFTDI_PKG libftdi)
+    pkg_check_modules(LIBFTDI_PKG libftdi1)
   endif(NOT WIN32)
 
   find_path(LIBFTDI_INCLUDE_DIR
@@ -28,6 +28,7 @@ if (NOT LIBFTDI_FOUND)
     PATHS
     /usr/include
     /usr/local/include
+    /usr/local/include/libftdi1
     )
 
   if(USE_STATIC_FTDI)
@@ -43,6 +44,7 @@ if (NOT LIBFTDI_FOUND)
     PATHS
     /usr/lib
     /usr/local/lib
+    /usr/local/lib/libftdi1
     )
 
   if(USE_STATIC_FTDI)
@@ -55,13 +57,14 @@ if (NOT LIBFTDI_FOUND)
   find_package_handle_standard_args(LIBFTDI DEFAULT_MSG LIBFTDI_LIBRARIES LIBFTDI_INCLUDE_DIR)
 
   if(USE_STATIC_FTDI)
-    add_library(libftdi STATIC IMPORTED)
+    add_library(libftdi1 STATIC IMPORTED)
   else(USE_STATIC_FTDI)
-    add_library(libftdi SHARED IMPORTED)
+    add_library(libftdi1 SHARED IMPORTED)
+    target_include_directories(libftdi1 INTERFACE ${LIBFTDI_INCLUDE_DIR})
   endif(USE_STATIC_FTDI)
 
-  set_target_properties(libftdi PROPERTIES IMPORTED_LOCATION ${LIBFTDI_LIBRARIES})
-  set(${LIBFTDI_LIBRARIES} libftdi)
+  set_target_properties(libftdi1 PROPERTIES IMPORTED_LOCATION ${LIBFTDI_LIBRARIES})
+  set(${LIBFTDI_LIBRARIES} libftdi1)
 
   #mark_as_advanced(LIBFTDI_INCLUDE_DIR LIBFTDI_LIBRARIES)
 
